@@ -19,7 +19,9 @@ import { demoThreads, demoTick, demoRandom } from './demo.js'
  * archive in either is an archive in both.
  */
 
-const DEMO = new URLSearchParams(location.search).has('demo')
+/** A copy hosted away from the scanner — nothing to read, nothing to save, and no colony beside it. */
+const STANDALONE = Boolean(window.REEF_STANDALONE)
+const DEMO = STANDALONE || new URLSearchParams(location.search).has('demo')
 const POLL_MS = 15000
 
 const settings = new Settings()
@@ -57,7 +59,7 @@ const hud = new Hud(document.body, settings, {
     return t ? transcriptProgress(t) : 0
   },
 })
-hud.setDemo(DEMO)
+hud.setDemo(DEMO, STANDALONE)
 
 // ── selection ─────────────────────────────────────────────────────────────────────────
 

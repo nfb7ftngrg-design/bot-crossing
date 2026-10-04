@@ -110,6 +110,7 @@ export class Hud {
     colony.href = '/'
     colony.title = 'The same threads as bots'
     bar.appendChild(colony)
+    this.colonyLink = colony
     root.appendChild(bar)
 
     this.labels = el('div', 'reef-labels')
@@ -145,7 +146,9 @@ export class Hud {
     this.syncSettings()
   }
 
-  setDemo(on) {
+  setDemo(on, standalone = false) {
+    // A hosted copy has no colony page to link across to.
+    if (standalone) this.colonyLink.hidden = true
     if (this.boot) this.boot.querySelector('span').textContent = on ? 'Diving in (demo)…' : 'Diving in…'
     document.querySelector('.reef-demo').hidden = !on
   }
