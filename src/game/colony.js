@@ -30,6 +30,9 @@ import { MAX_AGENT_CAP } from '../core/settings.js'
 import { Particles } from '../agents/particles.js'
 import { Navigation } from '../agents/navigation.js'
 import { liveThreadsForColony } from './hidden-projects.js'
+import { STATUS_ORDER, statusFor } from './status.js'
+
+export { STATUS_ORDER, STATUS_LABEL, statusFor, transcriptProgress } from './status.js'
 
 /**
  * The colony: everything that turns a list of agent threads into a place.
@@ -50,7 +53,6 @@ import { liveThreadsForColony } from './hidden-projects.js'
  * you have running.
  */
 
-const STALE_MS = 3 * 24 * 60 * 60 * 1000
 /** How wide an astronaut is, for the purpose of not fitting through gaps it should not. */
 const AGENT_RADIUS = 0.26
 /**
@@ -63,29 +65,6 @@ const TRAVEL_RADIUS = 0.12
 const LIVE_GROWTH = 0.004
 /** How many zones' positions to remember, including repos with nothing running in them. */
 const LAYOUT_MEMORY = 80
-
-export const STATUS_ORDER = ['blocked', 'waiting', 'working', 'celebrating', 'idle', 'sleeping']
-
-export const STATUS_LABEL = {
-  working: 'Working',
-  waiting: 'Waiting on you',
-  blocked: 'Blocked',
-  celebrating: 'Shipped',
-  idle: 'Idle',
-  sleeping: 'Dormant',
-  spawning: 'Arriving',
-  leaving: 'Heading home',
-}
-
-/** Thread → behaviour. First match wins, exactly like the board's auto-sort. */
-export function statusFor(thread, now = Date.now()) {
-  if (thread.hasError) return 'blocked'
-  if (thread.running) return 'working'
-  if (thread.prState === 'MERGED') return 'celebrating'
-  if (thread.unread) return 'waiting'
-  if (now - thread.lastActivityAt > STALE_MS) return 'sleeping'
-  return 'idle'
-}
 
 /**
  * Which behaviours earn a badge. Dormant and idle deliberately get none: their pose and
@@ -101,24 +80,6 @@ const BADGE_FOR = {
   idle: BADGE.none,
   spawning: BADGE.spawning,
   leaving: BADGE.leaving,
-}
-
-/** Transcript size → how finished the building looks. Log scale: threads grow fast early. */
-/**
- * How far along a thread is, on a log scale over its transcript size. This drives the bar
- * on the thread card — it no longer drives how much of the building you can see.
- *
- * It used to. The shader draws construction by sinking the structure into the ground and
- * discarding what falls below the deck, and mapping transcript size onto that meant most
- * buildings stood permanently waist-deep in their own plot. Read as a picture of a colony
- * rather than as a chart, that is not "this thread is young", it is "this building is
- * broken" — a dome cut off by a flat plane looks like a rendering fault, and it is the
- * first thing the eye goes to. So the sink is now only what it is good at: the few seconds
- * of a new building rising out of the ground.
- */
-export function transcriptProgress(thread) {
-  const size = Math.max(1, thread.sizeBytes || 0)
-  return THREE.MathUtils.clamp((Math.log10(size) - 3) / 3.5, 0.05, 1)
 }
 
 export class Colony {

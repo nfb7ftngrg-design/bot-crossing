@@ -4,6 +4,7 @@ import { DEFAULT_PRESET, Settings, hasStoredSettings } from './core/settings.js'
 import { Engine } from './core/engine.js'
 import { CameraRig } from './core/camera.js'
 import { Colony, STATUS_LABEL, STATUS_ORDER, statusFor, transcriptProgress } from './game/colony.js'
+import { withViewed } from './game/status.js'
 import { Hud } from './ui/hud.js'
 import { PLANETS } from './world/planet.js'
 import { DECK_TOP, PLOT_CELL, hexToWorld, worldToHex } from './world/plots.js'
@@ -913,11 +914,7 @@ function applyThreads(list) {
 
   // A thread you have said you looked at stops counting as unread until it moves on again.
   // Done here rather than in `statusFor` so the card, the badge and the astronaut all agree.
-  const viewed = state.viewedAt || {}
-  threads = list.map((t) => {
-    const at = viewed[t.id]
-    return at && t.lastActivityAt <= at ? { ...t, unread: false } : t
-  })
+  threads = withViewed(list, state.viewedAt || {})
   list = threads
   const archivedSet = new Set(state.archived)
   const hiddenSet = new Set(state.hiddenProjects || [])
