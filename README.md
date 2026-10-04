@@ -849,7 +849,8 @@ src/
                kits, buildings, the ship
   agents/      the crew rig and its bake, instanced bots, faces, badges, particles
   audio/       the ambience engine, the sound registry, the synths
-  game/        threads → colony, and the API client
+  game/        threads → colony, the shared status function, and the API client
+  reef/        the second world: water, seabed, coral, the school, its HUD
   ui/          the HUD
 tools/         asset packers — raw packs in, the four glbs the app loads out
 public/assets/ spacebase.glb, crew.glb, forest.glb, nature.glb
@@ -884,6 +885,31 @@ not you build anything like this:
   coding agent's sessions without disturbing them
 - [asset pipeline](.claude/skills/agent-session-world/references/asset-pipeline.md) — decent art
   without an artist
+
+### The Reef
+
+The reef is one of those other shapes, built from that skill and shipped alongside the colony.
+`npm run dev`, then open **`/reef.html`**: every thread is a fish, every repo a shelf of reef
+rock on exactly the hexes its colony plot holds, and the ship's cell is a sunken wreck that new
+fish swim out of and archived ones swim back into. `/reef.html?demo` runs it on invented threads
+and saves nothing.
+
+| Thread | Fish |
+| --- | --- |
+| Errored | Lists on its side by its coral, colour drained, red eyes, `!` |
+| Working | Darts round its coral carrying a pebble, kicking up sand |
+| PR merged | Loops over its coral with a flash, `✓` |
+| **Waiting on you** | **Rises out of the reef to face you under a gold light column, `?`** — `N` flies to the next |
+| Dormant | Rests on the sand |
+| Anything else | Mills about its shelf |
+
+It shares the colony's frame instead of copying it — `statusFor` (`src/game/status.js`), the
+layout rule (`src/world/layout.js`), the engine, camera and quality presets, and
+`data/colony.json` itself — so the two can be open side by side and an archive in one is an
+archive in both. Coral grows with transcript size by unfolding whole branches in the vertex
+shader, so a young thread has a small, complete coral rather than a big one half buried. The
+whole school is one instanced draw, swimming in the vertex shader; the design notes are in
+[design/reef.md](design/reef.md).
 
 ## Who made this
 
