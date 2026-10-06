@@ -11,15 +11,21 @@
  */
 
 export class ReefSound {
-  constructor(settings) {
+  /**
+   * `options` lets another world reuse the same three layers in its own key: which settings turn
+   * it on and set its volume, how low the bed sits, and how sharp the work sounds are.
+   */
+  constructor(settings, { enabledKey = 'reefSound', volumeKey = 'reefVolume', bed = 380, work = 2600 } = {}) {
     this.settings = settings
+    this.keys = { enabled: enabledKey, volume: volumeKey }
+    this.tone = { bed, work }
     this.ctx = null
     this.lastCall = 0
     this.busy = 0
   }
 
   get enabled() {
-    return Boolean(this.settings.get('reefSound'))
+    return Boolean(this.settings.get(this.keys.enabled))
   }
 
   /** Called from a click: browsers only allow audio to start inside a user gesture. */
@@ -49,7 +55,7 @@ export class ReefSound {
     noise.loop = true
     const lowpass = ctx.createBiquadFilter()
     lowpass.type = 'lowpass'
-    lowpass.frequency.value = 380
+    lowpass.frequency.value = this.tone.bed
     const swell = ctx.createOscillator()
     swell.frequency.value = 0.08
     const swellDepth = ctx.createGain()
@@ -70,7 +76,7 @@ export class ReefSound {
     tick.loop = true
     const band = ctx.createBiquadFilter()
     band.type = 'bandpass'
-    band.frequency.value = 2600
+    band.frequency.value = this.tone.work
     band.Q.value = 3
     this.work = ctx.createGain()
     this.work.gain.value = 0
@@ -82,7 +88,7 @@ export class ReefSound {
   update(busyNearby) {
     if (!this.ctx) return
     const now = this.ctx.currentTime
-    const volume = this.enabled ? (this.settings.get('reefVolume') ?? 0.5) * 0.6 : 0
+    const volume = this.enabled ? (this.settings.get(this.keys.volume) ?? 0.5) * 0.6 : 0
     this.master.gain.setTargetAtTime(volume, now, 0.3)
     this.busy += (Math.min(1, busyNearby / 5) - this.busy) * 0.05
     this.work.gain.setTargetAtTime(this.busy * 0.5, now, 0.4)

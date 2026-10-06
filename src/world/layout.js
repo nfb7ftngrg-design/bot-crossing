@@ -89,25 +89,46 @@ const cellsNeeded = (threadCount) =>
  * @param previous Map of id → cells from the last pass (or a saved colony file).
  * @returns Map of id → cells.
  */
-export function allocateCells(projects, previous = new Map()) {
-  const laid = layOut(projects, previous)
-  // Remembering where a zone sat is worth a great deal, right up until it leaves the colony
-  // as scattered islands. Then the memory is describing a map that no longer exists, and
-  // starting over — compact, from the middle, the way a first run does it — is the lesser
-  // upheaval. It only happens when the alternative is visibly broken.
-  return isConnected(laid) ? laid : layOut(projects, new Map())
+/**
+ * The layout rule, for any lattice. A lattice says what a cell's neighbours are, how far apart
+ * two cells are, which cells sit in each ring out from the middle, which cells nobody may claim,
+ * how many cells a project of a given size wants, and whether a layout is still one piece. The
+ * hex colony and the lab's square floor plan are both this one rule.
+ */
+export function createAllocator(lattice) {
+  const L = lattice
+  return function allocate(projects, previous = new Map()) {
+    const laid = layOut(L, projects, previous)
+    // Remembering where a zone sat is worth a great deal, right up until it leaves the colony
+    // as scattered islands. Then the memory is describing a map that no longer exists, and
+    // starting over — compact, from the middle, the way a first run does it — is the lesser
+    // upheaval. It only happens when the alternative is visibly broken.
+    return L.connected(laid) ? laid : layOut(L, projects, new Map())
+  }
 }
 
-function layOut(projects, previous) {
-  const reserved = key(SHIP_CELL.q, SHIP_CELL.r)
+const HEX = {
+  dirs: HEX_DIRS,
+  ring: (radius) => hexRing(radius),
+  distance: hexDistance,
+  reserved: [SHIP_CELL],
+  poolRings: POOL_RINGS,
+  cellsNeeded: (n) => cellsNeeded(n),
+  connected: isConnected,
+}
+
+export const allocateCells = createAllocator(HEX)
+
+function layOut(L, projects, previous) {
+  const reserved = new Set(L.reserved.map((c) => key(c.q, c.r)))
   // Shrinking has hysteresis. A zone sitting exactly on a cell boundary would otherwise
   // hand a tile back the moment one thread is archived and claim it again when the next
   // one starts — and every hand-back rebuilds the plot and walks its whole crew. A tile is
   // only returned once the repo has lost a few threads past the line.
   const wanted = projects.map((p) => {
     const before = previous.get(p.id)
-    let want = cellsNeeded(p.size)
-    if (before && before.length > want) want = Math.min(before.length, cellsNeeded(p.size + 3))
+    let want = L.cellsNeeded(p.size)
+    if (before && before.length > want) want = Math.min(before.length, L.cellsNeeded(p.size + 3))
     return { id: p.id, want }
   })
   const total = wanted.reduce((n, w) => n + w.want, 0)
@@ -123,12 +144,12 @@ function layOut(projects, previous) {
   // prevent, arriving by the back door.
   let farthest = 0
   for (const project of projects) {
-    for (const cell of previous.get(project.id) || []) farthest = Math.max(farthest, hexDistance(cell, ORIGIN))
+    for (const cell of previous.get(project.id) || []) farthest = Math.max(farthest, L.distance(cell, ORIGIN))
   }
-  for (let ring = 0; (pool.length < total + 30 || ring <= farthest) && ring < POOL_RINGS; ring++) {
-    for (const cell of hexRing(ring)) {
+  for (let ring = 0; (pool.length < total + 30 || ring <= farthest) && ring < L.poolRings; ring++) {
+    for (const cell of L.ring(ring)) {
       const k = key(cell.q, cell.r)
-      if (k === reserved) continue
+      if (reserved.has(k)) continue
       pool.push(cell)
       free.add(k)
     }
@@ -160,7 +181,7 @@ function layOut(projects, previous) {
   for (const { id, want } of wanted) {
     const cells = held.get(id)
     if (!cells) continue
-    growBlob(cells, want, free)
+    growBlob(L, cells, want, free)
     out.set(id, cells)
   }
 
@@ -173,24 +194,24 @@ function layOut(projects, previous) {
     }
     free.delete(key(seed.q, seed.r))
     const cells = [{ q: seed.q, r: seed.r }]
-    growBlob(cells, want, free)
+    growBlob(L, cells, want, free)
     out.set(id, cells)
   }
   return out
 }
 
 /** Claim free neighbours until the blob is big enough, hugging its root cell first. */
-function growBlob(cells, want, free) {
+function growBlob(L, cells, want, free) {
   const root = cells[0]
   while (cells.length < want) {
     let best = null
     let bestScore = Infinity
     for (const c of cells) {
-      for (const [dq, dr] of HEX_DIRS) {
+      for (const [dq, dr] of L.dirs) {
         const n = { q: c.q + dq, r: c.r + dr }
         if (!free.has(key(n.q, n.r))) continue
         // Hug the root first, then the middle of the colony, so blobs come out compact.
-        const score = hexDistance(n, root) * 100 + hexDistance(n, ORIGIN)
+        const score = L.distance(n, root) * 100 + L.distance(n, ORIGIN)
         if (score < bestScore) {
           bestScore = score
           best = n

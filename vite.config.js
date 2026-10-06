@@ -15,7 +15,7 @@ export default defineConfig({
   server: { port: Number(process.env.PORT) || 5274, strictPort: false },
   build: {
     target: 'esnext',
-    // Two pages over the same threads: the colony, and the reef.
-    rollupOptions: { input: { main: 'index.html', reef: 'reef.html' } },
+    // Three pages over the same threads: the colony, the reef, and the lab.
+    rollupOptions: { input: { main: 'index.html', reef: 'reef.html', lab: 'lab.html' } },
   },
 })

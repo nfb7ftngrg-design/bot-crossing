@@ -31,10 +31,12 @@ const SQRT2 = Math.SQRT2
 const _near = []
 
 export class Navigation {
-  constructor() {
-    this.cell = CELL
-    this.half = HALF
-    this.size = Math.ceil((HALF * 2) / CELL)
+  /** Cell size and half-width can be overridden by a world laid out at a different scale. */
+  constructor({ cell = CELL, half = HALF, maxExpansions = MAX_EXPANSIONS } = {}) {
+    this.cell = cell
+    this.half = half
+    this.maxExpansions = maxExpansions
+    this.size = Math.ceil((half * 2) / cell)
     const n = this.size * this.size
 
     this.blocked = new Uint8Array(n)
@@ -286,7 +288,7 @@ export class Navigation {
 
   /** Short local walks must clear both the routing grid and the visible walls. */
   clearWalk(x0, z0, x1, z1) {
-    const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / (CELL * 0.5)))
+    const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / (this.cell * 0.5)))
     for (let i = 1; i <= steps; i++) {
       const t = i / steps
       const x = x0 + (x1 - x0) * t
@@ -393,7 +395,7 @@ export class Navigation {
         found = true
         break
       }
-      if (++expansions > MAX_EXPANSIONS) break
+      if (++expansions > this.maxExpansions) break
 
       const cx = current % size
       const cz = (current - cx) / size

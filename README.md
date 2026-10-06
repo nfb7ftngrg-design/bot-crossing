@@ -851,6 +851,7 @@ src/
   audio/       the ambience engine, the sound registry, the synths
   game/        threads → colony, the shared status function, and the API client
   reef/        the second world: water, seabed, coral, the school, its HUD
+  lab/         the third world: the underground facility, its staff, desks and case boards
   ui/          the HUD
 tools/         asset packers — raw packs in, the four glbs the app loads out
 public/assets/ spacebase.glb, crew.glb, forest.glb, nature.glb
@@ -921,6 +922,45 @@ archive in both. Coral grows with transcript size by unfolding whole branches in
 shader, so a young thread has a small, complete coral rather than a big one half buried. The
 whole school is one instanced draw, swimming in the vertex shader; the design notes are in
 [design/reef.md](design/reef.md).
+
+### The Lab
+
+The third world puts the same threads to work underground. Open **`/lab.html`**: you are looking
+down through the cut-away ceiling of Level B3 of the *Directorate of Thread Operations* — a
+fictional agency; its seal, name and signage are invented and copy no real one. Every thread is
+a person with their own workstation, every repo is a department of glass-walled rooms, and the
+building around them follows how real operations centres and secure facilities are laid out: a
+lobby with an elevator and a security checkpoint, an operations room with a video wall and the
+case boards, a server room, an evidence archive and a break room. The secure rooms each have
+one way in, from the lobby, the way a SCIF keeps a single controlled entrance.
+`/lab.html?demo` runs it on invented threads and saves nothing.
+
+| Thread | Person |
+| --- | --- |
+| Errored | Slumped at their desk, head in hands, red screen, `!` |
+| Working | Seated, typing, headset on, code scrolling, desk lamp lit |
+| PR merged | On their feet beside the desk cheering, confetti, `✓` |
+| **Waiting on you** | **Standing by the desk, waving at you under a gold light column, `?`** — `N` goes to the next |
+| Dormant | Asleep at the desk, screen dark |
+| Anything else | Potters round the department, stops for coffee in the break room |
+
+New threads step out of the elevator, clear the checkpoint and walk to their desk; archived ones
+clear their desk, walk back to the elevator, and their file joins the boxes in the evidence
+archive. The desk fills in with transcript size — more paper, a second monitor, a binder shelf.
+At night the floor dims and what stays lit is someone working.
+
+**Cases** are the big tasks you hand out. `C` opens the cases panel: write a title and a brief,
+pick a priority, and the case goes up on a corkboard in the operations room. Put workers on it
+from the panel or from any person's card: their photo is pinned to the board with red string and
+a case folder appears on their desk. "Brief" copies the case as text ready to paste into that
+worker's agent, and opens the thread if its harness can — the lab never writes to a harness.
+Cases are saved in `data/colony.json` with the rest, and two tabs editing different cases keep
+both edits.
+
+`/lab.html?check` runs the lab's 59 checks in the page — mapping, every state's pose, signals,
+desks, the crowd (no one ever inside a wall, at any crowd size), camera, light, post, every
+interaction, arrival and departure, and every case operation. The design notes, the references
+behind the floor plan and the full checklist are in [design/lab.md](design/lab.md).
 
 ## Who made this
 

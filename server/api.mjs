@@ -58,12 +58,39 @@ const emptyState = () => ({
   seen: {},
   hiddenProjects: [],
   viewedAt: {},
+  cases: {},
+  labRooms: {},
   settings: null,
   updatedAt: 0,
 })
 
 const asObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
 const asArray = (v) => (Array.isArray(v) ? v : [])
+
+/**
+ * The lab's case boards: the big tasks you hand to workers. Stored here because they are the
+ * game's own bookkeeping, like the archive list — nothing about a case is ever written to a
+ * harness. Kept to a known shape so a hand-edited file cannot put anything odd on a board.
+ */
+const CASE_STATUS = new Set(['open', 'active', 'closed'])
+const CASE_PRIORITY = new Set(['routine', 'priority', 'urgent'])
+function asCases(v) {
+  const out = {}
+  for (const [id, c] of Object.entries(asObject(v))) {
+    if (!c || typeof c !== 'object' || typeof c.title !== 'string') continue
+    out[id] = {
+      id,
+      title: c.title.slice(0, 120),
+      brief: typeof c.brief === 'string' ? c.brief.slice(0, 4000) : '',
+      priority: CASE_PRIORITY.has(c.priority) ? c.priority : 'routine',
+      status: CASE_STATUS.has(c.status) ? c.status : 'open',
+      assigned: asArray(c.assigned).filter((x) => typeof x === 'string').slice(0, 50),
+      createdAt: Number(c.createdAt) || 0,
+      updatedAt: Number(c.updatedAt) || 0,
+    }
+  }
+  return out
+}
 
 async function readState() {
   try {
@@ -77,6 +104,8 @@ async function readState() {
       seen: asObject(raw.seen),
       hiddenProjects: asArray(raw.hiddenProjects).map(String).filter(Boolean),
       viewedAt: asObject(raw.viewedAt),
+      cases: asCases(raw.cases),
+      labRooms: asObject(raw.labRooms),
       settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : null,
       updatedAt: Number(raw.updatedAt) || 0,
     }
@@ -112,6 +141,8 @@ async function writeState(next) {
     seen: asObject(next.seen),
     hiddenProjects: asArray(next.hiddenProjects).map(String).filter(Boolean),
     viewedAt: asObject(next.viewedAt),
+    cases: asCases(next.cases),
+    labRooms: asObject(next.labRooms),
     settings: next.settings && typeof next.settings === 'object' ? next.settings : null,
     updatedAt: Date.now(),
   }

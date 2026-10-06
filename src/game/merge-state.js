@@ -126,6 +126,10 @@ export function mergeState(base, local, remote) {
     seen: mergeMap(b.seen, l.seen, r.seen),
     hiddenProjects: mergeSet(b.hiddenProjects, l.hiddenProjects, r.hiddenProjects),
     viewedAt: mergeMap(b.viewedAt, l.viewedAt, r.viewedAt),
+    // A case is replaced whole when one tab edits it — its fields belong together — and two tabs
+    // editing different cases keep both.
+    cases: mergeMap(b.cases, l.cases, r.cases),
+    labRooms: mergeMap(b.labRooms, l.labRooms, r.labRooms),
     settings: l.settings && typeof l.settings === 'object' ? l.settings : r.settings ?? null,
   }
 }

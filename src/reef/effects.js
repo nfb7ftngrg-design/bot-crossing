@@ -209,7 +209,9 @@ export class Badges {
 
 // ── bubbles, sand, sparkle ──────────────────────────────────────────────────────────────
 
-const KIND = { bubbles: 0, sand: 1, sparkle: 2 }
+const KIND = { bubbles: 0, sand: 1, sparkle: 2, confetti: 3, steam: 4 }
+/** Confetti colours: anything but the waiting gold and the errored red. */
+const CONFETTI = [[0.36, 0.78, 1.0], [0.25, 0.81, 0.53], [0.95, 0.5, 0.75], [0.7, 0.55, 1.0], [1.0, 1.0, 1.0]]
 
 export class Effects {
   constructor(scene, max = 3000) {
@@ -222,6 +224,7 @@ export class Effects {
     this.kind = new Float32Array(max)
     this.size = new Float32Array(max)
     this.alpha = new Float32Array(max)
+    this.color = new Float32Array(max * 3).fill(1)
     this.cursor = 0
     this.alive = 0
 
@@ -234,18 +237,23 @@ export class Effects {
     geo.setAttribute('aKind', this.kindAttr)
     geo.setAttribute('aSize', this.sizeAttr)
     geo.setAttribute('aAlpha', this.alphaAttr)
+    this.colorAttr = new THREE.BufferAttribute(this.color, 3).setUsage(THREE.DynamicDrawUsage)
+    geo.setAttribute('aColor', this.colorAttr)
     this.material = new THREE.ShaderMaterial({
       uniforms: { uScale: { value: 1 } },
       vertexShader: /* glsl */ `
         attribute float aKind;
         attribute float aSize;
         attribute float aAlpha;
+        attribute vec3 aColor;
         uniform float uScale;
         varying float vKind;
         varying float vAlpha;
+        varying vec3 vColor;
         void main() {
           vKind = aKind;
           vAlpha = aAlpha;
+          vColor = aColor;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_PointSize = aSize * uScale * 300.0 / max(1.0, -mv.z);
           gl_Position = projectionMatrix * mv;
@@ -254,6 +262,7 @@ export class Effects {
       fragmentShader: /* glsl */ `
         varying float vKind;
         varying float vAlpha;
+        varying vec3 vColor;
         void main() {
           vec2 c = gl_PointCoord - 0.5;
           float d = length(c);
@@ -266,8 +275,15 @@ export class Effects {
             col = vec4(vec3(0.85, 0.97, 1.0) * 1.3, (rim * 0.8 + spec) * vAlpha);
           } else if (vKind < 1.5) {
             col = vec4(0.86, 0.78, 0.6, smoothstep(0.5, 0.0, d) * 0.55 * vAlpha);
-          } else {
+          } else if (vKind < 2.5) {
             col = vec4(vec3(0.75, 1.0, 1.0) * 3.0, smoothstep(0.5, 0.0, d) * vAlpha);
+          } else if (vKind < 3.5) {
+            // Confetti: a little square of paper.
+            if (abs(c.x) > 0.3 || abs(c.y) > 0.18) discard;
+            col = vec4(vColor * 1.4, vAlpha);
+          } else {
+            // Steam off a mug: soft, pale, faint.
+            col = vec4(vec3(0.92), smoothstep(0.5, 0.0, d) * 0.35 * vAlpha);
           }
           gl_FragColor = col;
         }
@@ -300,7 +316,17 @@ export class Effects {
       this.pos[i * 3 + 1] = at.y + (Math.random() - 0.5) * 0.2
       this.pos[i * 3 + 2] = at.z + (Math.random() - 0.5) * 0.3
       const a = Math.random() * Math.PI * 2
-      if (k === 0) {
+      if (k === 3) {
+        const s = 1.2 + Math.random() * 1.8
+        this.vel.set([Math.cos(a) * s * 0.6, 2.2 + Math.random() * 1.6, Math.sin(a) * s * 0.6], i * 3)
+        this.size[i] = 0.08 + Math.random() * 0.05
+        this.color.set(CONFETTI[Math.floor(Math.random() * CONFETTI.length)], i * 3)
+        this.life[i] = this.span[i] = 1.8 + Math.random() * 0.8
+      } else if (k === 4) {
+        this.vel.set([(Math.random() - 0.5) * 0.05, 0.22 + Math.random() * 0.12, (Math.random() - 0.5) * 0.05], i * 3)
+        this.size[i] = 0.05 + Math.random() * 0.04
+        this.life[i] = this.span[i] = 1.6 + Math.random() * 0.8
+      } else if (k === 0) {
         this.vel.set([Math.cos(a) * 0.15, 0.8 + Math.random() * 0.8, Math.sin(a) * 0.15], i * 3)
         this.size[i] = 0.06 + Math.random() * 0.1
       } else if (k === 1) {
@@ -335,6 +361,23 @@ export class Effects {
         this.pos[i * 3 + 2] += (this.vel[i * 3 + 2] + Math.cos(elapsed * 5 + i) * 0.25) * dt
         this.size[i] += dt * 0.01
         this.alpha[i] = Math.min(1, t * 6) * (1 - Math.max(0, t - 0.7) / 0.3)
+      } else if (k === 3) {
+        // Confetti: thrown up, then fluttering down with a sideways drift.
+        this.vel[i * 3 + 1] -= 3.2 * dt
+        const flutter = Math.exp(-1.6 * dt)
+        this.vel[i * 3] = this.vel[i * 3] * flutter + Math.sin(elapsed * 7 + i) * 0.4 * dt
+        this.vel[i * 3 + 2] *= flutter
+        this.vel[i * 3 + 1] = Math.max(this.vel[i * 3 + 1], -0.9)
+        this.pos[i * 3] += this.vel[i * 3] * dt
+        this.pos[i * 3 + 1] = Math.max(0.01, this.pos[i * 3 + 1] + this.vel[i * 3 + 1] * dt)
+        this.pos[i * 3 + 2] += this.vel[i * 3 + 2] * dt
+        this.alpha[i] = Math.min(1, t * 10) * (1 - Math.max(0, t - 0.8) / 0.2)
+      } else if (k === 4) {
+        this.pos[i * 3] += (this.vel[i * 3] + Math.sin(elapsed * 2 + i) * 0.03) * dt
+        this.pos[i * 3 + 1] += this.vel[i * 3 + 1] * dt
+        this.pos[i * 3 + 2] += this.vel[i * 3 + 2] * dt
+        this.size[i] += dt * 0.05
+        this.alpha[i] = Math.min(1, t * 4) * (1 - t)
       } else {
         const drag = Math.exp(-(k === 1 ? 2.2 : 3) * dt)
         this.vel[i * 3] *= drag
@@ -352,6 +395,7 @@ export class Effects {
     this.kindAttr.needsUpdate = true
     this.sizeAttr.needsUpdate = true
     this.alphaAttr.needsUpdate = true
+    this.colorAttr.needsUpdate = true
     this.points.geometry.setDrawRange(0, this.budget)
   }
 }

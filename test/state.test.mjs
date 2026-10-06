@@ -184,3 +184,46 @@ test('viewedAt is carried through the v1 migration with the ids it keys on', asy
     assert.deepEqual(Object.keys(state.viewedAt), [`claude-code:${id}`])
   })
 })
+
+// ── the lab's case boards and floor plan ───────────────────────────────────────
+
+test('two tabs editing different cases both keep their edit; a deleted case stays deleted', () => {
+  const c = (title, extra = {}) => ({ id: title, title, status: 'open', assigned: [], ...extra })
+  const base = { cases: { a: c('a'), b: c('b'), gone: c('gone') } }
+  const local = { cases: { a: c('a', { assigned: ['t1'] }), b: c('b') } } // assigned a, deleted gone
+  const remote = { cases: { a: c('a'), b: c('b', { status: 'closed' }), gone: c('gone'), fresh: c('fresh') } }
+  const out = mergeState(base, local, remote)
+  assert.deepEqual(out.cases.a.assigned, ['t1'])
+  assert.equal(out.cases.b.status, 'closed')
+  assert.ok(!('gone' in out.cases))
+  assert.ok('fresh' in out.cases)
+})
+
+test('the lab floor plan merges room by room, like the colony plots', () => {
+  const out = mergeState({ labRooms: { a: [[1, 0]] } }, { labRooms: { a: [[1, 0]], b: [[2, 0]] } }, { labRooms: { a: [[3, 0]] } })
+  assert.deepEqual(out.labRooms, { a: [[3, 0]], b: [[2, 0]] })
+})
+
+test('the server keeps cases to a known shape and round-trips them', async () => {
+  await withServer(async ({ call, dir }) => {
+    await fsp.writeFile(
+      path.join(dir, 'colony.json'),
+      JSON.stringify({
+        version: 2,
+        cases: {
+          ok: { title: 'Find the leak', priority: 'urgent', status: 'active', assigned: ['claude-code:x', 7], brief: 'b' },
+          junk: { priority: 'urgent' },
+          odd: { title: 'Odd', priority: 'whenever', status: 'lost' },
+        },
+        labRooms: { a: [[2, 1]] },
+        updatedAt: 1,
+      })
+    )
+    const state = await (await call('/api/state')).json()
+    assert.deepEqual(Object.keys(state.cases).sort(), ['odd', 'ok'])
+    assert.deepEqual(state.cases.ok.assigned, ['claude-code:x'])
+    assert.equal(state.cases.odd.priority, 'routine')
+    assert.equal(state.cases.odd.status, 'open')
+    assert.deepEqual(state.labRooms, { a: [[2, 1]] })
+  })
+})
