@@ -2,11 +2,11 @@ import * as THREE from 'three'
 import { allocateCells, hexToWorld } from '../world/layout.js'
 import { liveThreadsForColony } from '../game/hidden-projects.js'
 import { STATUS_ORDER, statusFor, transcriptProgress } from '../game/status.js'
-import { hash } from './shading.js'
 import { Water } from './water.js'
 import { Seabed } from './seabed.js'
 import { Corals } from './coral.js'
-import { School, MAX_FISH } from './fish.js'
+import { School, Shoal, MAX_FISH } from './fish.js'
+import { shelfSignal } from './signals.js'
 import { Beacons, Badges, Effects, BADGE } from './effects.js'
 
 /**
@@ -18,8 +18,8 @@ import { Beacons, Badges, Effects, BADGE } from './effects.js'
  * its own footprint changes.
  */
 
-/** Rim colours for shelves. No gold and no red: those are the waiting and errored signals. */
-const ACCENTS = [0x3fc6c0, 0x9b7bf0, 0xf27aa8, 0x58a8f0, 0x7fe0a0, 0xd36fd6, 0xb9a6f5, 0x46e0e8, 0x8fc2ff, 0xf0a3c8, 0x6fd3a8, 0xa58cff]
+/** A project this old (by its oldest thread) has the most overgrown shelf. */
+const AGE_FULL_MS = 180 * 864e5
 /** How many repos' ground to remember, including ones with nothing running right now. */
 const LAYOUT_MEMORY = 80
 /** Coral slots in a cell: the middle, then a ring of six. */
@@ -39,11 +39,12 @@ export class Reef {
     this.school = new School(scene, this.seabed, this.effects)
     this.beacons = new Beacons(scene)
     this.badges = new Badges(scene)
+    this.shoal = new Shoal(scene)
+    this._bubbleClock = 0
 
     /** project → cells, remembered between polls and seeded from the saved colony file. */
     this.plotCells = new Map()
     this.slotOf = new Map()
-    this.accents = new Map()
     this.projects = []
     this.threads = new Map()
     this.dormantProjects = new Set()
@@ -54,6 +55,8 @@ export class Reef {
   applySettings() {
     this.water.applySettings()
     this.effects.setBudget(this.settings.particleBudget)
+    // Traffic is ambience, and ambience is the first thing a weak machine gives up.
+    this.shoal.setVisible(this.settings.particleBudget > 0)
   }
 
   /** Before the first roster: shelves come back to the ground they held last time. */
@@ -119,9 +122,16 @@ export class Reef {
     }
     while (this.plotCells.size > LAYOUT_MEMORY) this.plotCells.delete(this.plotCells.keys().next().value)
 
-    for (const [name] of projects) if (!this.accents.has(name)) this.accents.set(name, this._pickAccent(name))
     const shown = new Map(projects.map(([name]) => [name, layout.get(name) || []]))
-    this.seabed.setLayout(shown, new Map([...this.accents].map(([n, hex]) => [n, new THREE.Color(hex)])))
+    // How established each project is, from its oldest thread, in tenths so a shelf is not
+    // rebuilt because a day went by.
+    const ages = new Map(
+      projects.map(([name, list]) => {
+        const oldest = Math.min(...list.map((t) => t.createdAt || now))
+        return [name, Math.round(Math.min(1, Math.max(0, (now - oldest) / AGE_FULL_MS)) * 10) / 10]
+      })
+    )
+    this.seabed.setLayout(shown, ages)
 
     const roster = []
     const seen = new Set()
@@ -147,27 +157,31 @@ export class Reef {
         slots.set(thread.id, slot)
       }
 
-      let urgent = false
-      let active = false
+      const statuses = []
+      const counts = {}
       for (const thread of list) {
         const status = statusFor(thread, now)
         stats[status]++
         stats.agents++
-        if (status === 'waiting' || status === 'blocked') urgent = true
-        if (status === 'waiting' || status === 'blocked' || status === 'working') active = true
+        statuses.push(status)
+        counts[status] = (counts[status] || 0) + 1
         const position = this._slotPosition(cells, slots.get(thread.id))
-        const home = this.corals.sync(thread.id, position, transcriptProgress(thread))
+        const home = this.corals.sync(thread.id, position, transcriptProgress(thread), status === 'working')
         if (!home) continue
         seen.add(thread.id)
-        roster.push({ id: thread.id, thread, status, home, cells, known: knownIds.has(thread.id) })
+        roster.push({ id: thread.id, thread, status, home, cells, project: name, known: knownIds.has(thread.id) })
       }
+      const signal = shelfSignal(statuses)
+      const urgent = signal.mode === 2
+      const active = urgent || statuses.includes('working')
       const centre = cells.reduce((acc, c) => {
         const w = hexToWorld(c.q, c.r)
         return acc.add(new THREE.Vector3(w.x, 0, w.z))
       }, new THREE.Vector3()).divideScalar(cells.length)
       centre.y = this.seabed.heightAt(centre.x, centre.z)
-      this.projects.push({ name, accent: this.accents.get(name), count: list.length, urgent, active, centre })
+      this.projects.push({ name, count: list.length, counts, signal, urgent, active, centre, cells, age: ages.get(name) })
     }
+    this.seabed.setSignals(new Map(this.projects.map((p) => [p.name, p.signal])))
 
     for (const id of [...this.corals.entries.keys()]) if (!seen.has(id)) this.corals.retire(id)
     this.threads = new Map(live.map((t) => [t.id, t]))
@@ -187,27 +201,30 @@ export class Reef {
     return new THREE.Vector3(x, this.seabed.heightAt(x, z) - 0.05, z)
   }
 
-  /** A stable colour per repo, probing forward on a collision so no two shelves match. */
-  _pickAccent(name) {
-    const used = new Set(this.accents.values())
-    const start = hash(name) % ACCENTS.length
-    for (let i = 0; i < ACCENTS.length; i++) {
-      const hex = ACCENTS[(start + i) % ACCENTS.length]
-      if (!used.has(hex)) return hex
-    }
-    return ACCENTS[start]
-  }
-
   update(dt, elapsed, camera, focus, selectedId) {
     const light = this.water.update(dt, elapsed, focus, camera)
     this.seabed.update(dt, light.night)
     this.corals.update(dt)
     this.school.update(dt, elapsed, camera, this.corals, selectedId)
+    this.shoal.update(dt, elapsed)
+
+    // Activity drives ambience: every running thread's coral breathes out a thin stream of
+    // bubbles, so a shelf with several threads at work is visibly busier than a quiet one.
+    this._bubbleClock += dt
+    if (this._bubbleClock > 0.35) {
+      this._bubbleClock = 0
+      for (const coral of this.corals.entries.values()) {
+        if (!coral.active || coral.leaving || Math.random() > 0.5) continue
+        const at = coral.position.clone()
+        at.y += coral.height * coral.growth * 0.9
+        this.effects.burst(at, 'bubbles', 1)
+      }
+    }
 
     const beacons = new Map()
     const badges = []
     for (const fish of this.school.order) {
-      if (fish.mode !== 'live') continue
+      if (fish.mode !== 'live' || !this.school.isShown(fish)) continue
       if (fish.status === 'waiting') beacons.set(fish.id, fish.pos)
       const icon = BADGE_FOR[fish.status]
       if (icon !== undefined) badges.push({ pos: new THREE.Vector3(fish.pos.x, fish.pos.y + 0.9, fish.pos.z), icon })

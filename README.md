@@ -896,12 +896,23 @@ and saves nothing.
 
 | Thread | Fish |
 | --- | --- |
-| Errored | Lists on its side by its coral, colour drained, red eyes, `!` |
+| Errored | Lies on its side on the sand by its coral, colour drained, red eyes, `!` |
 | Working | Darts round its coral carrying a pebble, kicking up sand |
 | PR merged | Loops over its coral with a flash, `✓` |
 | **Waiting on you** | **Rises out of the reef to face you under a gold light column, `?`** — `N` flies to the next |
-| Dormant | Rests on the sand |
-| Anything else | Mills about its shelf |
+| Dormant | Settles on the sand and stays put |
+| Anything else | Potters about its shelf in short legs, pausing to look around |
+
+Every fish shows what it is doing, where, and why: hover for its name plate (fish that want you
+keep theirs up), click for a card that says in plain words what the fish is doing and what that
+means about the thread. `/` searches shelves and threads, the filter shows only what needs you
+or only one shelf, the minimap flies you anywhere, `G` drops to ground level and `P` hides every
+panel for a picture. Sound is off until you turn it on in settings.
+
+`/reef.html?check` runs the reef's check suite in the page: every instruction in the skill that
+applies to this world, turned into a measurement — 64 of them, from "one draw for the crowd" to
+"the point under the cursor stays under it" — listed with where each lives in the code in
+[design/reef-checklist.md](design/reef-checklist.md).
 
 It shares the colony's frame instead of copying it — `statusFor` (`src/game/status.js`), the
 layout rule (`src/world/layout.js`), the engine, camera and quality presets, and

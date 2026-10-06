@@ -62,3 +62,87 @@ test('growing then shrinking returns a territory to the shape it started in', ()
   assert.deepEqual(shrunk.get('a'), start.get('a'))
   assert.deepEqual(shrunk.get('b'), start.get('b'))
 })
+
+// ── the reef's own pure decisions ─────────────────────────────────────────────
+
+import { shelfSignal, filterFor, search, waitingOrder, ago, SIGNAL } from '../src/reef/signals.js'
+import { fishLook, BODY, ARRIVE, DOING } from '../src/reef/fish.js'
+import { coralLook, coralGrowth, coralSize, CORAL_SCALE } from '../src/reef/coral.js'
+
+test('a shelf rim shows its loudest state, and nothing when it is quiet', () => {
+  assert.equal(shelfSignal(['idle', 'working', 'blocked', 'waiting']).status, 'blocked')
+  assert.equal(shelfSignal(['idle', 'waiting', 'working']).status, 'waiting')
+  assert.equal(shelfSignal(['idle', 'celebrating', 'working']).status, 'working')
+  assert.equal(shelfSignal(['idle', 'sleeping']).mode, 0)
+  // Only the states that want you pulse.
+  assert.equal(SIGNAL.blocked.mode, 2)
+  assert.equal(SIGNAL.waiting.mode, 2)
+  assert.equal(SIGNAL.working.mode, 1)
+})
+
+test('filters keep exactly what they say', () => {
+  const now = 1_800_000_000_000
+  const fish = [
+    { status: 'waiting', project: 'a', thread: { lastActivityAt: now - 1000 } },
+    { status: 'blocked', project: 'b', thread: { lastActivityAt: now - 1000 } },
+    { status: 'idle', project: 'a', thread: { lastActivityAt: now - 2 * 864e5 } },
+    { status: 'working', project: 'b', thread: { lastActivityAt: now } },
+  ]
+  assert.equal(filterFor('all'), null)
+  assert.deepEqual(fish.filter(filterFor('needs', now)).map((f) => f.status), ['waiting', 'blocked'])
+  assert.deepEqual(fish.filter(filterFor('project:a', now)).map((f) => f.status), ['waiting', 'idle'])
+  assert.equal(fish.filter(filterFor('today', now)).length, 3)
+})
+
+test('search ranks shelves first, then threads that want you', () => {
+  const projects = [{ name: 'harbour-api', count: 3 }, { name: 'web', count: 1 }]
+  const threads = [
+    { id: '1', title: 'harbour fix', project: 'web', lastActivityAt: 5 },
+    { id: '2', title: 'harbour docs', project: 'web', lastActivityAt: 9 },
+  ]
+  const status = { 1: 'waiting', 2: 'idle' }
+  const r = search('harbour', projects, threads, (t) => status[t.id])
+  assert.equal(r[0].kind, 'shelf')
+  assert.equal(r[1].id, '1') // waiting outranks the more recent idle one
+  assert.deepEqual(search('', projects, threads, () => 'idle'), [])
+  assert.equal(search('HARBOUR api', projects, threads, () => 'idle')[0].name, 'harbour-api')
+})
+
+test('N visits waiting fish longest-waiting first', () => {
+  const fish = [
+    { id: 'c', status: 'waiting', thread: { lastActivityAt: 300 } },
+    { id: 'a', status: 'idle', thread: { lastActivityAt: 1 } },
+    { id: 'b', status: 'waiting', thread: { lastActivityAt: 100 } },
+  ]
+  assert.deepEqual(waitingOrder(fish).map((f) => f.id), ['b', 'c'])
+})
+
+test('a fish and its coral look the same every time, from the id alone', () => {
+  const strip = (l) => {
+    const { random, ...rest } = l
+    return rest
+  }
+  assert.deepEqual(strip(fishLook('thread-1')), strip(fishLook('thread-1')))
+  assert.notDeepEqual(strip(fishLook('thread-1')), strip(fishLook('thread-2')))
+  assert.deepEqual(coralLook('thread-1'), coralLook('thread-1'))
+})
+
+test('coral size comes from work alone', () => {
+  assert.ok(coralSize(coralGrowth(1)) > coralSize(coralGrowth(0)))
+  assert.equal(coralSize(coralGrowth(0.5)), CORAL_SCALE * (0.85 + 0.3 * coralGrowth(0.5)))
+})
+
+test('fish keep a body apart, and arrival is wider than that spacing', () => {
+  assert.ok(ARRIVE > BODY)
+  for (const s of ['working', 'waiting', 'blocked', 'celebrating', 'sleeping', 'idle', 'arriving', 'leaving']) {
+    assert.ok(DOING[s] && DOING[s].length > 20, `no sentence for ${s}`)
+  }
+})
+
+test('"ago" reads like a person would say it', () => {
+  const now = 1_800_000_000_000
+  assert.equal(ago(now - 10_000, now), 'just now')
+  assert.equal(ago(now - 5 * 60_000, now), '5 min ago')
+  assert.equal(ago(now - 3 * 3600_000, now), '3 h ago')
+  assert.equal(ago(now - 2 * 864e5, now), '2 d ago')
+})

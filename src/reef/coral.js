@@ -20,6 +20,26 @@ const MAX_PER_KIND = 320
 const CORAL_COLORS = [0xf08ab4, 0xb48cf0, 0x6fd6c8, 0xf5f0e6, 0x7fb2f0, 0xe36f9a, 0x9bd66f, 0xf0a0d0, 0x5cc6e0, 0xc6a0f5]
 
 const KINDS = ['branching', 'brain', 'fan', 'tubes', 'table']
+/**
+ * One size for every coral. How big a coral looks is the thread's work and nothing else — a
+ * random size on top would put a coral that is big because it looks nice beside one that is big
+ * because its thread did a lot, and then neither could be read.
+ */
+export const CORAL_SCALE = 1.7
+
+/** A coral's form, colour and heading, from its thread id alone. Pure, for the tests. */
+export function coralLook(id) {
+  const random = rng(id)
+  return {
+    kind: KINDS[hash(id) % KINDS.length],
+    yaw: random() * Math.PI * 2,
+    color: CORAL_COLORS[Math.floor(random() * CORAL_COLORS.length)],
+  }
+}
+
+/** Size from work: a sapling for a fresh thread, full size at the top of the log scale. */
+export const coralGrowth = (progress) => 0.34 + 0.66 * progress
+export const coralSize = (target) => CORAL_SCALE * (0.85 + 0.3 * target)
 
 export class Corals {
   constructor(scene) {
@@ -33,8 +53,19 @@ export class Corals {
     const geo = BUILDERS[name]()
     const growth = new Float32Array(MAX_PER_KIND)
     geo.setAttribute('aGrowth', new THREE.InstancedBufferAttribute(growth, 1).setUsage(THREE.DynamicDrawUsage))
+    // 1 while the thread is running: its tips light, the way a lit window means someone is in.
+    const active = new Float32Array(MAX_PER_KIND)
+    geo.setAttribute('aActive', new THREE.InstancedBufferAttribute(active, 1).setUsage(THREE.DynamicDrawUsage))
+    // The tube sponges are open shells: seen into from above, so drawn from both sides, and
+    // shadowed from their back faces — a concave inside drawn single-sided self-shadows black.
+    const open = name === 'tubes'
     const { material, depth } = patchMaterial(
-      new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0 }),
+      new THREE.MeshStandardMaterial({
+        roughness: 0.62,
+        metalness: 0,
+        side: open ? THREE.DoubleSide : THREE.FrontSide,
+        shadowSide: open ? THREE.BackSide : null,
+      }),
       {
         key: `coral-${name}`,
         vertexPars: /* glsl */ `
@@ -42,8 +73,10 @@ export class Corals {
           attribute vec3 aBase;
           attribute float aTip;
           attribute float aGrowth;
+          attribute float aActive;
           uniform float uTime;
           varying float vTip;
+          varying float vActive;
         `,
         vertex: /* glsl */ `
           float unfold = smoothstep(aGrow, aGrow + 0.14, aGrowth);
@@ -51,14 +84,18 @@ export class Corals {
           // The outermost tips stir in the current.
           transformed.x += sin(uTime * 1.1 + aBase.y * 3.0 + aBase.x) * aTip * aTip * 0.05;
         `,
-        fragmentPars: /* glsl */ `varying float vTip;`,
+        fragmentPars: /* glsl */ `varying float vTip; varying float vActive;`,
         fragmentColor: /* glsl */ `
           diffuseColor.rgb = mix(diffuseColor.rgb * 0.62, mix(diffuseColor.rgb, vec3(1.0), 0.35), vTip);
         `,
         emissive: /* glsl */ `
           #if defined( USE_COLOR )
-            // After dark the tips glow with their own colour — bioluminescence, for bloom to find.
-            totalEmissiveRadiance += vColor.rgb * pow(vTip, 3.0) * uNight * 2.2;
+            // The tips of a running thread's coral glow — faintly by day, brightly after dark, with
+            // a slow pulse. Every other coral keeps only a dim night shimmer, so the glow means
+            // something: which threads are busy right now.
+            float pulse = 0.75 + 0.25 * sin(uTime * 2.4 + vReefWorld.x * 0.7);
+            float glow = uNight * 0.3 + vActive * pulse * (0.45 + uNight * 2.2);
+            totalEmissiveRadiance += vColor.rgb * pow(vTip, 3.0) * glow;
           #endif
         `,
       }
@@ -67,7 +104,7 @@ export class Corals {
     const previous = material.onBeforeCompile
     material.onBeforeCompile = (shader) => {
       previous(shader)
-      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvTip = aTip;')
+      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvTip = aTip; vActive = aActive;')
     }
     const mesh = new THREE.InstancedMesh(geo, material, MAX_PER_KIND)
     mesh.customDepthMaterial = depth
@@ -78,19 +115,18 @@ export class Corals {
     mesh.setColorAt(0, new THREE.Color(1, 1, 1))
     geo.computeBoundingBox()
     const size = geo.boundingBox.getSize(new THREE.Vector3())
-    return { name, mesh, growth, slots: [], free: [], radius: Math.max(size.x, size.z) / 2, height: size.y }
+    return { name, mesh, growth, active, slots: [], free: [], radius: Math.max(size.x, size.z) / 2, height: size.y }
   }
 
   /**
    * Make sure thread `id` has a coral at `position`, aiming for `progress` (0..1). Returns the
    * entry, which the fish use as home and obstacle.
    */
-  sync(id, position, progress) {
+  sync(id, position, progress, active = false) {
     let entry = this.entries.get(id)
     if (!entry) {
-      const random = rng(id)
-      const kindIndex = hash(id) % this.kinds.length
-      const kind = this.kinds[kindIndex]
+      const look = coralLook(id)
+      const kind = this.kinds[KINDS.indexOf(look.kind)]
       const slot = kind.free.length ? kind.free.pop() : kind.mesh.count++
       if (slot >= MAX_PER_KIND) {
         kind.mesh.count = MAX_PER_KIND
@@ -101,9 +137,8 @@ export class Corals {
         kind,
         slot,
         position: position.clone(),
-        yaw: random() * Math.PI * 2,
-        scale: 1.45 + random() * 0.55,
-        color: new THREE.Color(CORAL_COLORS[Math.floor(random() * CORAL_COLORS.length)]),
+        yaw: look.yaw,
+        color: new THREE.Color(look.color),
         growth: 0,
         target: 0,
         leaving: false,
@@ -119,7 +154,14 @@ export class Corals {
     }
     entry.leaving = false
     // Never below a sapling, so even a brand-new thread has something to call home.
-    entry.target = 0.34 + 0.66 * progress
+    const target = coralGrowth(progress)
+    if (target !== entry.target) {
+      entry.target = target
+      this._place(entry)
+    }
+    entry.active = active
+    entry.kind.active[entry.slot] = active ? 1 : 0
+    entry.kind.mesh.geometry.attributes.aActive.needsUpdate = true
     return entry
   }
 
@@ -131,7 +173,7 @@ export class Corals {
 
   _place(entry) {
     const m = new THREE.Matrix4()
-    const s = entry.scale * (0.85 + 0.3 * entry.target)
+    const s = coralSize(entry.target)
     m.compose(entry.position, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), entry.yaw), new THREE.Vector3(s, s, s))
     entry.kind.mesh.setMatrixAt(entry.slot, m)
     entry.kind.mesh.instanceMatrix.needsUpdate = true
@@ -154,6 +196,8 @@ export class Corals {
         }
         if (entry.leaving && entry.growth < 0.01) {
           kind.growth[slot] = 0
+          kind.active[slot] = 0
+          kind.mesh.geometry.attributes.aActive.needsUpdate = true
           kind.slots[slot] = null
           kind.free.push(slot)
           this.entries.delete(entry.id)

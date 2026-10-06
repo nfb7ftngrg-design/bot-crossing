@@ -28,6 +28,12 @@ const SAND_DARK = new THREE.Color(0x9c8c66)
 const ROCK = new THREE.Color(0x6e7b6c)
 const ROCK_DARK = new THREE.Color(0x46534c)
 const ALGAE = new THREE.Color(0x5f8a55)
+/** The sponge band along a shelf's rim, before any state colours it. Neutral on purpose. */
+const SPONGE = new THREE.Color(0x8a8578)
+/** How many shelves can carry a rim signal at once — far more than ever share a screen. */
+export const MAX_ZONES = 64
+/** Seconds for newly claimed ground to rise out of the sand. */
+const RISE_TIME = 2.5
 
 export class Seabed {
   constructor(scene, settings) {
@@ -37,12 +43,57 @@ export class Seabed {
     this.owner = new Map()
     this.signature = ''
 
+    this.zoneIndex = new Map()
+    this.uniforms = {
+      // Per shelf: rim colour, and 0 quiet / 1 steady / 2 pulsing. Updated every roster, no rebuild.
+      uZone: { value: Array.from({ length: MAX_ZONES }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uRise: { value: 1 },
+    }
     const { material } = patchMaterial(
       new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0 }),
-      { key: 'seabed' }
+      {
+        key: 'seabed',
+        uniforms: this.uniforms,
+        vertexPars: /* glsl */ `
+          attribute float aZone;
+          attribute float aRim;
+          attribute float aRise;
+          uniform vec4 uZone[${MAX_ZONES}];
+          uniform float uRise;
+          uniform float uTime;
+          varying vec3 vRimColor;
+          varying float vRim;
+        `,
+        vertex: /* glsl */ `
+          // Ground a shelf has just claimed rises out of the sand rather than appearing.
+          transformed.y -= aRise * (1.0 - uRise);
+          vRimColor = vec3(0.0);
+          vRim = 0.0;
+          int zone = int(aZone + 0.5);
+          if (zone >= 0 && zone < ${MAX_ZONES}) {
+            vec4 signal = uZone[zone];
+            float pulse = signal.w > 1.5 ? 0.55 + 0.45 * sin(uTime * 3.2) : 1.0;
+            vRimColor = signal.rgb;
+            vRim = aRim * step(0.5, signal.w) * pulse;
+          }
+        `,
+        fragmentPars: /* glsl */ `
+          varying vec3 vRimColor;
+          varying float vRim;
+        `,
+        fragmentColor: /* glsl */ `
+          diffuseColor.rgb = mix(diffuseColor.rgb, vRimColor, vRim * 0.8);
+        `,
+        emissive: /* glsl */ `
+          // Enough glow for a shelf that wants you to read after dark too.
+          totalEmissiveRadiance += vRimColor * vRim * 0.35;
+        `,
+      }
     )
     this.material = material
     this.mesh = null
+    this.previousOwner = new Map()
+    this.riseClock = RISE_TIME
 
     this.wreck = createWreck()
     const { x, z } = hexToWorld(SHIP_CELL.q, SHIP_CELL.r)
@@ -56,28 +107,37 @@ export class Seabed {
   }
 
   /**
-   * Rebuild the floor for this layout. `layout` is Map(project → cells), `accents` is
-   * Map(project → THREE.Color). Returns false when nothing moved, which is the usual case.
+   * Rebuild the floor for this layout. `layout` is Map(project → cells); `ages` is
+   * Map(project → 0..1), how established the project is, which decides how overgrown its shelf
+   * looks. Returns false when nothing moved, which is the usual case.
    */
-  setLayout(layout, accents) {
-    const signature = JSON.stringify([...layout].map(([n, cells]) => [n, cells.map((c) => [c.q, c.r]), accents.get(n)?.getHex()]))
+  setLayout(layout, ages = new Map()) {
+    const signature = JSON.stringify([...layout].map(([n, cells]) => [n, cells.map((c) => [c.q, c.r]), ages.get(n) ?? 0]))
     if (signature === this.signature) return false
     this.signature = signature
 
+    // Ground that changed hands is the ground that rises. On the very first build nothing rises:
+    // a reload is not news.
+    const before = this.owner.size ? this.owner : null
     this.owner = new Map()
     for (const [name, cells] of layout) for (const c of cells) this.owner.set(cellKey(c.q, c.r), name)
+    this.zoneIndex = new Map([...layout.keys()].slice(0, MAX_ZONES).map((name, i) => [name, i]))
 
     const geo = new THREE.PlaneGeometry(EXTENT, EXTENT, SEGMENTS, SEGMENTS)
     geo.rotateX(-Math.PI / 2)
     const pos = geo.attributes.position
     const colors = new Float32Array(pos.count * 3)
+    const zone = new Float32Array(pos.count).fill(-1)
+    const rimWeight = new Float32Array(pos.count)
+    const rise = new Float32Array(pos.count)
+    let rising = false
     const col = new THREE.Color()
     const wreck = hexToWorld(SHIP_CELL.q, SHIP_CELL.r)
 
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i)
       const z = pos.getZ(i)
-      const { own, dEdge } = this._shelfAt(x, z)
+      const { own, dEdge, key } = this._shelfAt(x, z)
       const sand = this._sand(x, z, wreck)
       let h = sand
       let plateau = 0
@@ -89,25 +149,33 @@ export class Seabed {
       }
       pos.setY(i, h)
       this.heights[i] = h
+      if (own) {
+        zone[i] = this.zoneIndex.get(own) ?? -1
+        if (before && before.get(key) !== own) {
+          rise[i] = Math.max(0, h - sand)
+          rising = true
+        }
+      }
 
       // Colour: sand, cliff, rock top, and the project's colour encrusting the rim.
       const grain = fbm(x * 0.6, z * 0.6, 2)
       col.copy(SAND).lerp(SAND_DARK, grain * 0.7)
       if (own) {
-        const accent = accents.get(own)
+        // An older project has had longer to grow over: more turf and sponge on its shelf.
+        const age = ages.get(own) ?? 0
         const top = smooth(0.75, 1, plateau)
         const rock = col.clone().copy(ROCK_DARK).lerp(ROCK, top)
-        rock.lerp(ALGAE, top * smooth(0.45, 0.75, fbm(x * 0.25 + 9, z * 0.25, 3)) * 0.6)
+        rock.lerp(ALGAE, top * smooth(0.55 - age * 0.25, 0.8 - age * 0.25, fbm(x * 0.25 + 9, z * 0.25, 3)) * (0.35 + age * 0.45))
         // Rubble and turf: darker speckle and pale sand pockets, so a shelf top reads as reef flat.
         const speck = fbm(x * 3.1 + 4, z * 3.1, 2)
         rock.multiplyScalar(0.82 + speck * 0.36)
         rock.lerp(SAND, top * smooth(0.6, 0.72, fbm(x * 0.5 - 3, z * 0.5 + 8, 3)) * 0.7)
-        if (accent) {
-          // A band of sponge and encrusting coral where the shelf meets the channel.
-          const rim = smooth(0.35, 0.9, plateau) * (1 - smooth(1.5, 3.4, dEdge))
-          const speckle = 0.55 + 0.45 * smooth(0.4, 0.6, fbm(x * 2.2, z * 2.2, 2))
-          rock.lerp(accent, rim * speckle * 0.75)
-        }
+        // A band of sponge where the shelf meets the channel. Neutral here: the shader colours it
+        // with whatever the shelf's threads are doing, and leaves it neutral when nothing is.
+        const rim = smooth(0.35, 0.9, plateau) * (1 - smooth(1.5, 3.4, dEdge))
+        const speckle = 0.55 + 0.45 * smooth(0.4, 0.6, fbm(x * 2.2, z * 2.2, 2))
+        rock.lerp(SPONGE, rim * speckle * (0.3 + age * 0.3))
+        rimWeight[i] = rim * speckle
         col.lerp(rock, smooth(0.08, 0.4, plateau))
       }
       colors[i * 3] = col.r
@@ -115,6 +183,13 @@ export class Seabed {
       colors[i * 3 + 2] = col.b
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    geo.setAttribute('aZone', new THREE.BufferAttribute(zone, 1))
+    geo.setAttribute('aRim', new THREE.BufferAttribute(rimWeight, 1))
+    geo.setAttribute('aRise', new THREE.BufferAttribute(rise, 1))
+    if (rising) {
+      this.riseClock = 0
+      this.uniforms.uRise.value = 0
+    }
     geo.computeVertexNormals()
 
     if (this.mesh) {
@@ -128,6 +203,25 @@ export class Seabed {
     this.wreck.group.position.y = this.heightAt(wreck.x, wreck.z) - 0.2
     this.kelp.scatter(this, this.settings.get('scatterDensity'))
     return true
+  }
+
+  /**
+   * Colour each shelf's rim by what its threads are doing. `signals` is Map(project → { color,
+   * mode }) from `shelfSignal`. Cheap: it only rewrites a uniform array.
+   */
+  setSignals(signals) {
+    const zones = this.uniforms.uZone.value
+    for (const v of zones) v.set(0, 0, 0, 0)
+    for (const [name, signal] of signals) {
+      const i = this.zoneIndex.get(name)
+      if (i === undefined) continue
+      zones[i].set(signal.color[0], signal.color[1], signal.color[2], signal.mode)
+    }
+  }
+
+  /** True while new ground is still rising, for the checks. */
+  get rising() {
+    return this.riseClock < RISE_TIME
   }
 
   setDensity(density) {
@@ -150,7 +244,8 @@ export class Seabed {
   _shelfAt(x, z) {
     const cell = worldToHex(x, z)
     const own = this.owner.get(cellKey(cell.q, cell.r))
-    if (!own) return { own: null, dEdge: 0 }
+    const key = cellKey(cell.q, cell.r)
+    if (!own) return { own: null, dEdge: 0, key }
     const c = hexToWorld(cell.q, cell.r)
     const lx = x - c.x
     const lz = z - c.z
@@ -161,7 +256,7 @@ export class Seabed {
       const n = EDGE_NORMALS[j]
       dEdge = Math.min(dEdge, APOTHEM - (lx * n[0] + lz * n[1]))
     }
-    return { own, dEdge: dEdge === Infinity ? CLIFF * 4 : Math.max(0, dEdge) }
+    return { own, dEdge: dEdge === Infinity ? CLIFF * 4 : Math.max(0, dEdge), key }
   }
 
   /** Floor height at a world point, bilinear over the heightfield. */
@@ -189,6 +284,11 @@ export class Seabed {
 
   update(dt, night) {
     this.wreck.setNight(night)
+    if (this.riseClock < RISE_TIME) {
+      this.riseClock += dt
+      const t = Math.min(1, this.riseClock / RISE_TIME)
+      this.uniforms.uRise.value = t * t * (3 - 2 * t)
+    }
   }
 }
 
@@ -214,8 +314,14 @@ function createWreck() {
   }
   const hullGeo = new THREE.LatheGeometry(profile, 20, Math.PI * 0.5, Math.PI)
   hullGeo.rotateZ(Math.PI / 2)
-  const hull = new THREE.Mesh(hullGeo, wood)
-  hull.material.side = THREE.DoubleSide
+  // The hull is an open shell: both sides drawn, and shadowed from its back faces so the inside
+  // does not self-shadow black. Its own material — the deck and cabin are closed boxes and stay
+  // single-sided, or their coincident faces fight.
+  const { material: hullWood } = patchMaterial(
+    new THREE.MeshStandardMaterial({ color: 0x5a4434, roughness: 0.9, side: THREE.DoubleSide, shadowSide: THREE.BackSide }),
+    { key: 'wreck-hull' }
+  )
+  const hull = new THREE.Mesh(hullGeo, hullWood)
   hull.scale.set(1, 1.25, 1)
   hull.castShadow = true
   hull.receiveShadow = true

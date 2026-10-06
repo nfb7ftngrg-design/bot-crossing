@@ -106,8 +106,13 @@ export class Beacons {
 
 export const BADGE = { none: -1, waiting: 0, blocked: 1, done: 2 }
 
+/**
+ * The badge glyphs. A badge holds roughly its size on screen, so it is magnified most when you
+ * lean in — the cells are drawn large enough for about one texel per device pixel at the closest
+ * zoom, and mipmaps carry the far end.
+ */
 function badgeAtlas() {
-  const size = 128
+  const size = 256
   const canvas = document.createElement('canvas')
   canvas.width = size * 3
   canvas.height = size
@@ -116,27 +121,29 @@ function badgeAtlas() {
     const cx = i * size + size / 2
     ctx.fillStyle = 'rgba(0,0,0,0.25)'
     ctx.beginPath()
-    ctx.arc(cx, size / 2 + 4, size * 0.4, 0, Math.PI * 2)
+    ctx.arc(cx, size / 2 + size * 0.03, size * 0.4, 0, Math.PI * 2)
     ctx.fill()
     ctx.fillStyle = fill
     ctx.beginPath()
     ctx.arc(cx, size / 2, size * 0.4, 0, Math.PI * 2)
     ctx.fill()
-    ctx.lineWidth = 7
+    ctx.lineWidth = size * 0.055
     ctx.strokeStyle = 'rgba(255,255,255,0.95)'
     ctx.stroke()
     ctx.fillStyle = '#fff'
     ctx.font = `800 ${size * 0.5}px system-ui, -apple-system, Segoe UI, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(glyph, cx, size / 2 + 3)
+    ctx.fillText(glyph, cx, size / 2 + size * 0.025)
   }
   draw(0, '#e7a91c', '?')
   draw(1, '#e0453a', '!')
   draw(2, '#2fae6a', '✓')
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = 4
+  texture.anisotropy = 8
+  texture.generateMipmaps = true
+  texture.minFilter = THREE.LinearMipmapLinearFilter
   return texture
 }
 
