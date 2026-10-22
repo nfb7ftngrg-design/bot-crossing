@@ -148,6 +148,13 @@ Verified on a real machine:
   with records shaped `{ timestamp, type, payload }`, and what looks like an index at
   `~/.codex/session_index.jsonl`. Not implemented yet.
 
+- **Paperclip** — an embedded Postgres under `~/.paperclip/instances/<id>/` (`$PAPERCLIP_HOME`,
+  `$PAPERCLIP_INSTANCE_ID`), owned by its server and not opened from outside. The adapter reads
+  the board API instead — `GET /api/companies` and `GET /api/companies/:id/agents` on the
+  host/port in that instance's `config.json`, `127.0.0.1:3100` by default, or
+  `BOT_CROSSING_PAPERCLIP_URL`. Only GETs; a `local_trusted` instance lets a loopback caller in.
+  Implemented in `paperclip.mjs`.
+
 For anything else, the fastest way in is usually to start a throwaway session in that harness
 and watch which files change:
 
